@@ -417,7 +417,8 @@ recv_finish(tw_pe *me, tw_event *e, char * buffer)
 
   if (g_tw_synchronization_protocol == OPTIMISTIC ||
       g_tw_synchronization_protocol == OPTIMISTIC_DEBUG ||
-      g_tw_synchronization_protocol == OPTIMISTIC_REALTIME ) {
+      g_tw_synchronization_protocol == OPTIMISTIC_REALTIME ||
+    	g_tw_synchronization_protocol == CLONE ) {
     tw_hash_insert(me->hash_t, e, e->send_pe);
     e->state.remote = 1;
   }

@@ -215,7 +215,8 @@ tw_gvt_step2(tw_pe *me)
 
 	// only FC if OPTIMISTIC or REALTIME, do not do for DEBUG MODE
 	if( g_tw_synchronization_protocol == OPTIMISTIC ||
-	    g_tw_synchronization_protocol == OPTIMISTIC_REALTIME )
+	    g_tw_synchronization_protocol == OPTIMISTIC_REALTIME||
+	 	g_tw_synchronization_protocol == CLONE )
 	  {
 	    start = tw_clock_read();
 	    tw_pe_fossil_collect();
@@ -360,7 +361,8 @@ tw_gvt_step2(tw_pe *me)
 
 	// only FC if OPTIMISTIC or REALTIME, do not do for DEBUG MODE
 	if( g_tw_synchronization_protocol == OPTIMISTIC ||
-	    g_tw_synchronization_protocol == OPTIMISTIC_REALTIME )
+	    g_tw_synchronization_protocol == OPTIMISTIC_REALTIME||
+	 	g_tw_synchronization_protocol == CLONE )
 	  {
 	    start = tw_clock_read();
 	    tw_pe_fossil_collect();

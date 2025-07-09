@@ -54,7 +54,8 @@ tw_pe_init(void)
     //If we're in (some variation of) optimistic mode, we need this hash
     if (g_tw_synchronization_protocol == OPTIMISTIC ||
         g_tw_synchronization_protocol == OPTIMISTIC_DEBUG ||
-        g_tw_synchronization_protocol == OPTIMISTIC_REALTIME) {
+        g_tw_synchronization_protocol == OPTIMISTIC_REALTIME ||
+	g_tw_synchronization_protocol == CLONE) {
         g_tw_pe->hash_t = tw_hash_create();
     } else {
         g_tw_pe->hash_t = NULL;

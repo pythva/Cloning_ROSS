@@ -32,6 +32,8 @@ enum tw_synch_e {
     OPTIMISTIC,
     OPTIMISTIC_DEBUG,
     OPTIMISTIC_REALTIME,
+    OPTIMISTIC_FOO,
+    CLONE
 };
 
 typedef enum tw_synch_e tw_synch;
@@ -80,6 +82,7 @@ typedef void (*event_f) (void *sv, tw_bf * cv, void *msg, tw_lp * me);
 typedef void (*revent_f) (void *sv, tw_bf * cv, void *msg, tw_lp * me);
 typedef void (*commit_f) (void *sv, tw_bf * cv, void *msg, tw_lp * me);
 typedef void (*final_f) (void *sv, tw_lp * me);
+typedef void (*clone_event_f) (void *sv, tw_bf * cv, void *msg, tw_lp * me, int * clone_handle);
 
 /**
  * tw_lptype
@@ -90,6 +93,7 @@ struct tw_lptype {
     init_f init; /**< @brief LP setup routine */
     pre_run_f pre_run; /**< @brief Second stage LP initialization */
     event_f event; /**< @brief LP event handler routine */
+    clone_event_f clone_event; /* handle for clone event */
     revent_f revent;  /**< @brief LP Reverse event handler routine */
     commit_f commit;  /**< @brief LP Commit event routine */
     final_f final; /**< @brief Final handler routine */

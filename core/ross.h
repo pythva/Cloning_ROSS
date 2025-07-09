@@ -235,6 +235,9 @@ typedef uint64_t tw_lpid;
 
 #include "ross-inline.h"
 
+void build_clone_state_type(void);   /* call once after MPI_Init          */
+void clone_send_state(int receiver);         /* rank-0 side – actually sends      */
+void clone_progress_recv(int sender);      /* rank-1 side – polls for delivery  */
 
 #ifdef __cplusplus
 }

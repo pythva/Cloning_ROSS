@@ -25,7 +25,7 @@ static int32_t ross_core_rng_seed4;
 
 static const tw_optdef kernel_options[] = {
     TWOPT_GROUP("ROSS Kernel"),
-    TWOPT_UINT("synch", g_tw_synchronization_protocol, "Sychronization Protocol: SEQUENTIAL=1, CONSERVATIVE=2, OPTIMISTIC=3, OPTIMISTIC_DEBUG=4, OPTIMISTIC_REALTIME=5"),
+    TWOPT_UINT("synch", g_tw_synchronization_protocol, "Sychronization Protocol: SEQUENTIAL=1, CONSERVATIVE=2, OPTIMISTIC=3, OPTIMISTIC_DEBUG=4, OPTIMISTIC_REALTIME=5, CLONE=7"),
     TWOPT_UINT("nkp", nkp_per_pe, "number of kernel processes (KPs) per pe"),
     TWOPT_DOUBLE("end", g_tw_ts_end, "simulation end timestamp"),
     TWOPT_UINT("batch", g_tw_mblock, "messages per scheduler block"),
@@ -443,7 +443,11 @@ void tw_run(void) {
         case OPTIMISTIC_REALTIME: // case 5
             tw_scheduler_optimistic_realtime(me);
             break;
-
+	case CLONE:{ // case 7, under construction
+	    printf("Using CLONE mode\n");
+	    //tw_scheduler_optimistic(me);
+	    tw_scheduler_clone(me);
+	    break;}
         default:
             tw_error(TW_LOC, "No Synchronization Protocol Specified! \n");
     }

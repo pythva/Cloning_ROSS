@@ -293,7 +293,222 @@ static void tw_sched_batch(tw_pe * me) {
         }
 
     }
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+static void tw_sched_batch_clone(tw_pe * me, int * clone_depth) {
+    /* Number of consecutive times we gave up because there were no free event buffers. */
+    static int no_free_event_buffers = 0;
+    static int warned_no_free_event_buffers = 0;
+    const int max_alloc_fail_count = 20;
+
+    tw_clock     start, pq_start;
+    unsigned int     msg_i;
+
+    /* Process g_tw_mblock events, or until the PQ is empty
+    * (whichever comes first).
+    */
+    int rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+     if (rank == 1) {
+        printf("process all the event gvt\n");
+        }
+
+    for (msg_i = g_tw_mblock; msg_i; msg_i--) {
+         
+	    if (rank == 1) {
+        printf("processing event\n");
+        }
+
+	tw_event *cev;
+        tw_lp *clp;
+        tw_kp *ckp;
+
+        /* OUT OF FREE EVENT BUFFERS.  BAD.
+        * Go do fossil collect immediately.
+        */
+        if (me->free_q.size <= g_tw_gvt_threshold) {
+            /* Suggested by Adam Crume */
+            if (++no_free_event_buffers > 10) {
+                if (!warned_no_free_event_buffers) {
+                    fprintf(stderr, "WARNING: No free event buffers.  Try increasing memory via the --extramem option.\n");
+                    warned_no_free_event_buffers = 1;
+                }
+                if (no_free_event_buffers >= max_alloc_fail_count) {
+                    tw_error(TW_LOC, "Event allocation failed %d consecutive times.  Exiting.", max_alloc_fail_count);
+                }
+            }
+            tw_gvt_force_update();
+            break;
+        }
+        no_free_event_buffers = 0;
+
+        start = tw_clock_read();
+        if (!(cev = tw_pq_dequeue(me->pq))) {
+            break;
+        }
+        me->stats.s_pq += tw_clock_read() - start;
+#ifndef USE_RAND_TIEBREAKER
+        // Note: I don't believe this captures all event ties
+        if(TW_STIME_CMP(cev->recv_ts, tw_pq_minimum(me->pq)) == 0) {
+            me->stats.s_pe_event_ties++;
+        }
+#endif
+
+        clp = cev->dest_lp;
+
+	ckp = clp->kp;
+	me->cur_event = cev;
+#ifdef USE_RAND_TIEBREAKER
+    ckp->last_sig = cev->sig;
+#else
+	ckp->last_time = cev->recv_ts;
+#endif
+
+	/* Save state if no reverse computation is available */
+	if (!clp->type->revent) {
+	  tw_error(TW_LOC, "Reverse Computation must be implemented!");
+	}
+
+	start = tw_clock_read();
+	reset_bitfields(cev);
+
+	// if NOT A SUSPENDED LP THEN FORWARD PROC EVENTS
+	if( !(clp->suspend_flag) )
+	  {
+        // state-save and update the LP's critical path
+        unsigned int prev_cp = clp->critical_path;
+        clp->critical_path = ROSS_MAX(clp->critical_path, cev->critical_path)+1;
+	//    (*clp->type->event)(clp->cur_state, &cev->cv,
+	//			tw_event_data(cev), clp);
+	int clone_flag = 0;
+	clp->type->clone_event(clp->cur_state, &cev->cv,tw_event_data(cev), clp, &clone_flag);// calling clone event
+	if (clone_flag == 1){
+		//*clone_depth = 3;
+        	printf("cloning is needed, testing depth is %d\n", *clone_depth);
+    		// using the depth to calculated which kp to send the data
+		MPI_Request sreq;
+        	int des = (int)g_tw_mynode | (1u << (*clone_depth));// the local id plus the shift 
+		MPI_Isend(clone_depth, 1, MPI_INT,
+                  	/*dest=*/des, 99, MPI_COMM_WORLD, &sreq);
+		*clone_depth += 1;// increment the depth
+		clone_send_state(des);
+		MPI_Wait(&sreq, MPI_STATUS_IGNORE);}
+	else{
+        	printf("cloning is not needed\n");}
+        if (g_st_ev_trace == FULL_TRACE)
+            st_collect_event_data(cev, (double)tw_clock_read() / g_tw_clock_rate);
+        cev->critical_path = prev_cp;
+	  }
+	ckp->s_nevent_processed++;
+    // instrumentation
+    ckp->kp_stats->s_nevent_processed++;
+    clp->lp_stats->s_nevent_processed++;
+	me->stats.s_event_process += tw_clock_read() - start;
+
+	/* We ran out of events while processing this event.  We
+	 * cannot continue without doing GVT and fossil collect.
+	 */
+
+	if (me->cev_abort)
+	  {
+	    start = tw_clock_read();
+	    me->stats.s_nevent_abort++;
+        // instrumentation
+        ckp->kp_stats->s_nevent_abort++;
+        clp->lp_stats->s_nevent_abort++;
+	    me->cev_abort = 0;
+
+	    tw_event_rollback(cev);
+        pq_start = tw_clock_read();
+	    tw_pq_enqueue(me->pq, cev);
+        me->stats.s_pq += tw_clock_read() - pq_start;
+
+	    cev = tw_eventq_peek(&ckp->pevent_q);
+#ifdef USE_RAND_TIEBREAKER
+        ckp->last_sig = cev ? cev->sig : me->GVT_sig;
+#else
+	    ckp->last_time = cev ? cev->recv_ts : me->GVT;
+#endif
+
+	    tw_gvt_force_update();
+
+	    me->stats.s_event_abort += tw_clock_read() - start;
+
+
+	    break;
+	  } // END ABORT CHECK
+
+	/* Thread current event into processed queue of kp */
+        cev->state.owner = TW_kp_pevent_q;
+        tw_eventq_unshift(&ckp->pevent_q, cev);
+
+        if(g_st_rt_sampling &&
+                tw_clock_read() - g_st_rt_samp_start_cycles > g_st_rt_interval)
+        {
+            tw_clock current_rt = tw_clock_read();
+#ifdef USE_DAMARIS
+            if (g_st_engine_stats == RT_STATS || g_st_engine_stats == ALL_STATS)
+            {
+                if (g_st_damaris_enabled)
+                    st_damaris_expose_data(me, me->GVT, RT_COL);
+                else
+                    st_collect_engine_data(me, RT_COL);
+            }
+#else
+            if (g_st_engine_stats == RT_STATS || g_st_engine_stats == ALL_STATS)
+                st_collect_engine_data(me, RT_COL);
+            if (g_st_model_stats == RT_STATS || g_st_model_stats == ALL_STATS)
+                st_collect_model_data(me, ((double) current_rt) / g_tw_clock_rate, RT_STATS);
+#endif
+            g_st_rt_samp_start_cycles = tw_clock_read();
+        }
+
+    }
+    if (rank == 1) {
+        printf("after processing event\n");
+        }
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 static void tw_sched_batch_realtime(tw_pe * me) {
     /* Number of consecutive times we gave up because there were no free event buffers. */
@@ -742,6 +957,133 @@ void tw_scheduler_optimistic(tw_pe * me) {
 
     tw_stats(me);
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+void tw_scheduler_clone(tw_pe * me) {
+    tw_clock start;
+    int clone_depth = 0;// init all clone_depth to 0
+    if (g_tw_mynode == g_tw_masternode) {
+        printf("*** START PARALLEL OPTIMISTIC SIMULATION WITH SUSPEND LP FEATURE ***\n\n");
+    }
+
+    tw_wall_now(&me->start_time);
+    me->stats.s_total = tw_clock_read();
+    int rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    //MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    unsigned int sender_location = 0;
+    if (g_tw_mynode != 0) {
+    	unsigned int child = (unsigned int)g_tw_mynode;
+    	unsigned int msb   = 31u - __builtin_clz(child);
+    	sender_location    = child & ~(1u << msb);
+    }
+
+	
+    if (rank == 1) {
+    	printf("before process receive event\n");
+	}
+    build_clone_state_type();
+    MPI_Request rreq;
+    // peformed calculation for which kp to receive the data from
+        /* Post the receive immediately (non-blocking) */
+    MPI_Irecv(&clone_depth, 1, MPI_INT,
+                  /*src=*/sender_location, 99, MPI_COMM_WORLD, &rreq);
+    int done = 0;
+    for (;;) {
+        if (tw_nnodes() > 1) {
+            start = tw_clock_read();
+            tw_net_read(me);
+            me->stats.s_net_read += tw_clock_read() - start;
+        }
+	if (rank == 1) {
+        printf("before gvt\n");
+        }
+
+        tw_gvt_step1(me);
+        tw_sched_event_q(me);
+        tw_sched_cancel_q(me);
+        tw_gvt_step2(me);
+	
+	// do it right after the gvt sync	
+	if (!done) {
+		MPI_Test(&rreq, &done, MPI_STATUS_IGNORE);
+		if (done){
+			printf("Rank 1 received testing clone_depth = %d\n", clone_depth);
+			clone_depth += 1; /* local depth is parent+1 */
+			clone_progress_recv(sender_location);
+		}
+	}
+	if (rank == 1) {
+        printf("after gvt\n");
+        }
+#ifdef USE_RAND_TIEBREAKER
+        if (TW_STIME_DBL(me->GVT_sig.recv_ts) > g_tw_ts_end)
+            break;
+#else
+        if (TW_STIME_DBL(me->GVT) > g_tw_ts_end)
+            break;
+#endif
+
+        //tw_sched_batch(me);
+	tw_sched_batch_clone(me, &clone_depth);
+    }
+
+    tw_wall_now(&me->end_time);
+    me->stats.s_total = tw_clock_read() - me->stats.s_total;
+
+    tw_net_barrier();
+
+    if (g_tw_mynode == g_tw_masternode) {
+        printf("*** END SIMULATION ***\n\n");
+    }
+
+    // call the model PE finalize function
+    (*me->type.final)(me);
+
+    st_inst_finalize(me);
+
+    tw_stats(me);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 void tw_scheduler_optimistic_realtime(tw_pe * me) {
     tw_clock start;

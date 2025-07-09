@@ -195,7 +195,8 @@ tw_init_kps(tw_pe * me)
 		kp->s_rb_secondary = 0;
         if (g_tw_synchronization_protocol == OPTIMISTIC ||
 	    g_tw_synchronization_protocol == OPTIMISTIC_DEBUG ||
-	    g_tw_synchronization_protocol == OPTIMISTIC_REALTIME) {
+	    g_tw_synchronization_protocol == OPTIMISTIC_REALTIME ||
+	    g_tw_synchronization_protocol == CLONE) {
             kp->output = init_output_messages(kp);
         }
 
