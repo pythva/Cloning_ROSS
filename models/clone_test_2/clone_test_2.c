@@ -19,6 +19,7 @@ void clone_send_state(int receiver)
     //if (g_tw_mynode != 0) return;
 
     tw_lp *lp0 = g_tw_lp[0];
+    /*
     if (!lp0)
         fprintf(stderr, "[rank %d] lp0 is NULL!\n", g_tw_mynode);
     else if (!lp0->cur_state)
@@ -29,7 +30,7 @@ void clone_send_state(int receiver)
         fprintf(stderr,
                 "[rank %d] counter before send = %d (addr %p)\n",
                 g_tw_mynode, state->counter, (void*)state);
-    }
+    }*/
     clone_test_2_state *state =
         (clone_test_2_state *) lp0->cur_state;
 
@@ -47,6 +48,7 @@ void clone_progress_recv(int sender)
     //if (g_tw_mynode != 1) return;      /* only rank 1 does the work */
 
     tw_lp *lp1 = g_tw_lp[0];
+    /*
     if (!lp1)
         fprintf(stderr, "[rank %d] lp1 is NULL!\n", g_tw_mynode);
     else if (!lp1->cur_state)
@@ -57,7 +59,7 @@ void clone_progress_recv(int sender)
         fprintf(stderr,
                 "[rank %d] counter *before* recv = %d (addr %p)\n",
                 g_tw_mynode, state->counter, (void*)state);
-    }
+    }*/
     clone_test_2_state *state =
         (clone_test_2_state *) lp1->cur_state;
 
@@ -101,11 +103,17 @@ void
 clone_clone_test_2_event_handler(clone_test_2_state * s, tw_bf * bf, clone_test_2_message * m, tw_lp * lp, int * clone_handler)
 { 
   // assuming only lp 0 send message to lp0, then lp0 and lp0 is the only person that do the incrementation
+  
+  if((lp->id) == 3){
+  	printf("INSIDE LP3 HANDLER");
+  }
+
+  printf("PE ID: %d\n", g_tw_mynode);
   if(((s->counter) % 2 == 1)){
   	*clone_handler = 1;  
   }
   s->counter++; //only lp0 should the lp will increment one 
-  if((s->counter) < 4){
+  if((s->counter) < 5){//tree branch will be 7, two branch is 5, if one branch then 3
   	tw_event_send(
     		tw_event_new(lp->gid,
            	tw_rand_exponential(lp->rng, DUNE_PILOT_START_TIME),
@@ -134,7 +142,7 @@ void clone_test_2_commit(clone_test_2_state * s, tw_bf * bf, clone_test_2_messag
 void
 clone_test_2_finish(clone_test_2_state * s, tw_lp * lp)
 {
- printf("at lp: %lu, the counter is %d\n",lp->gid,s->counter); 
+ printf("at lp: %lu, the counter is %d, CURRENT TIME IS: %f\n",lp->gid,s->counter, tw_now(lp)); 
 }
 
 tw_lptype       mylps[] = {

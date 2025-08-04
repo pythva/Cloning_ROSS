@@ -55,8 +55,10 @@ void tw_event_send(tw_event * event) {
     link_causality(event, send_pe->cur_event);
 
     if (dest_peid == g_tw_mynode) {
-        event->dest_lp = tw_getlocal_lp((tw_lpid) event->dest_lp);
-        dest_pe = event->dest_lp->pe;
+        //printf("SENDING local, DEST: %lu", ((tw_lpid) event->dest_lp));
+	event->dest_lp = tw_getlocal_lp((tw_lpid) event->dest_lp);
+        //printf("AFTER SENDING local, DEST: %lu", ((tw_lpid) event->dest_lp));
+	dest_pe = event->dest_lp->pe;
 
 #ifdef USE_RAND_TIEBREAKER
         if (send_pe == dest_pe && tw_event_sig_compare(event->dest_lp->kp->last_sig, event->sig) <= 0) {
@@ -88,6 +90,7 @@ void tw_event_send(tw_event * event) {
         * We need to send it over the network to the other PE
         * for processing.
         */
+	//printf("SENDING to different rank DEST: %lu", ((tw_lpid) event->dest_lp));
         send_pe->stats.s_nsend_net_remote++;
         //event->src_lp->lp_stats->s_nsend_net_remote++;
         event->state.owner = TW_net_asend;

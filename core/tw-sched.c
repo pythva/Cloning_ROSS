@@ -329,14 +329,14 @@ static void tw_sched_batch_clone(tw_pe * me, int * clone_depth) {
     */
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-     if (rank == 1) {
-        printf("process all the event gvt\n");
-        }
+     //if (rank == 1) {
+        //printf("process all the event gvt\n");
+       // }
 
     for (msg_i = g_tw_mblock; msg_i; msg_i--) {
          
-	    if (rank == 1) {
-        printf("processing event\n");
+	if (rank == 3) {
+        	printf("PROCESSING EVENT\n");
         }
 
 	tw_event *cev;
@@ -361,11 +361,20 @@ static void tw_sched_batch_clone(tw_pe * me, int * clone_depth) {
             break;
         }
         no_free_event_buffers = 0;
+	
+	if (rank == 3) {
+                printf("AFTER FOSSIL COLLECTION\n");
+        }
 
         start = tw_clock_read();
         if (!(cev = tw_pq_dequeue(me->pq))) {
             break;
         }
+
+	if (rank == 3) {
+                printf("AFTER DDE_QUEUE EVENT\n");
+        }
+
         me->stats.s_pq += tw_clock_read() - start;
 #ifndef USE_RAND_TIEBREAKER
         // Note: I don't believe this captures all event ties
@@ -373,6 +382,10 @@ static void tw_sched_batch_clone(tw_pe * me, int * clone_depth) {
             me->stats.s_pe_event_ties++;
         }
 #endif
+	if (rank == 3) {
+                printf("AFTER TIE BREAKER\n");
+        }
+
 
         clp = cev->dest_lp;
 
@@ -401,10 +414,16 @@ static void tw_sched_batch_clone(tw_pe * me, int * clone_depth) {
 	//    (*clp->type->event)(clp->cur_state, &cev->cv,
 	//			tw_event_data(cev), clp);
 	int clone_flag = 0;
+	//printf("the size of event queue before event handler : %d and the size of priority queue: %d\n", me->event_q.size, tw_pq_get_size(me->pq));
+	
+ 	if (rank == 3) {
+        	printf("BEFORE ENTER EVENT HANDLER\n");
+        }
+	
 	clp->type->clone_event(clp->cur_state, &cev->cv,tw_event_data(cev), clp, &clone_flag);// calling clone event
 	if (clone_flag == 1){
 		//*clone_depth = 3;
-        	printf("cloning is needed, testing depth is %d\n", *clone_depth);
+        	//printf("cloning is needed, testing depth is %d\n", *clone_depth);
     		// using the depth to calculated which kp to send the data
 		MPI_Request sreq;
         	int des = (int)g_tw_mynode | (1u << (*clone_depth));// the local id plus the shift 
@@ -412,10 +431,40 @@ static void tw_sched_batch_clone(tw_pe * me, int * clone_depth) {
                   	/*dest=*/des, 99, MPI_COMM_WORLD, &sreq);
 		*clone_depth += 1;// increment the depth
 		clone_send_state(des);
-		MPI_Wait(&sreq, MPI_STATUS_IGNORE);}
-	else{
-        	printf("cloning is not needed\n");}
-        if (g_st_ev_trace == FULL_TRACE)
+		MPI_Wait(&sreq, MPI_STATUS_IGNORE);
+		// a not pretty approach of doing this
+		if(tw_pq_get_size(me->pq)){
+			tw_event *temp;
+			temp = tw_pq_dequeue(me->pq);
+			//printf("EVENT CLONING IS NEED, testing depth is %d\n", *clone_depth);
+			// performed the send
+		
+			printf("PRIOR SENDING: LP %lu, TO: LP %lu \n",
+                         (tw_lpid)temp->src_lp, (tw_lpid)temp->dest_lp);
+
+			MPI_Send(
+    			temp,                               // Buffer to send
+    			(int)g_tw_event_msg_sz,              // Number of bytes
+    			MPI_BYTE,                        // Data type
+    			(int)des,                    // Destination rank
+    			199,                       // Tag (must match)
+    			MPI_COMM_WORLD                    // Communicator
+			);
+			
+			tw_pq_enqueue(me->pq, temp);
+		}
+	}else{
+        	//printf("cloning is not needed\n");
+		}
+
+	// small testing 
+	// dequeing and then immediately enqueue
+	//tw_event *temp;
+	//temp = tw_pq_dequeue(me->pq);
+	//tw_pq_enqueue(me->pq, temp);
+	
+        //printf("the size of event queue after: %d and periority queue: %d\n", me->event_q.size, tw_pq_get_size(me->pq));
+	if (g_st_ev_trace == FULL_TRACE)
             st_collect_event_data(cev, (double)tw_clock_read() / g_tw_clock_rate);
         cev->critical_path = prev_cp;
 	  }
@@ -484,8 +533,8 @@ static void tw_sched_batch_clone(tw_pe * me, int * clone_depth) {
         }
 
     }
-    if (rank == 1) {
-        printf("after processing event\n");
+    if (rank == 3) {
+        printf("AFTER PROCESSING EVENT\n");
         }
 
 }
@@ -1003,7 +1052,7 @@ void tw_scheduler_clone(tw_pe * me) {
 
 	
     if (rank == 1) {
-    	printf("before process receive event\n");
+    	//printf("before process receive event\n");
 	}
     build_clone_state_type();
     MPI_Request rreq;
@@ -1019,7 +1068,7 @@ void tw_scheduler_clone(tw_pe * me) {
             me->stats.s_net_read += tw_clock_read() - start;
         }
 	if (rank == 1) {
-        printf("before gvt\n");
+        //printf("before gvt\n");
         }
 
         tw_gvt_step1(me);
@@ -1031,22 +1080,70 @@ void tw_scheduler_clone(tw_pe * me) {
 	if (!done) {
 		MPI_Test(&rreq, &done, MPI_STATUS_IGNORE);
 		if (done){
-			printf("Rank 1 received testing clone_depth = %d\n", clone_depth);
+			//printf("Rank 1 received testing clone_depth = %d\n", clone_depth);
 			clone_depth += 1; /* local depth is parent+1 */
 			clone_progress_recv(sender_location);
+			// receive the event
+			//tw_event temp;
+			MPI_Status event_status;
+			tw_event	*e = NULL;	
+			//printf("before THE SIZE OF THE EVENT QUEUE %d\n", me->event_q.size);
+                        //printf("before THE SIZE OF THE FREE EVENT QUEUE %d\n", me->free_q.size);
+			e = tw_event_grab(me);
+			MPI_Recv(e,
+         		(int)g_tw_event_msg_sz,
+         		MPI_BYTE,
+         		sender_location,            //not wild card source
+         		199,
+         		MPI_COMM_WORLD,
+         		&event_status);
+			// put the kick_off event into the priority queue
+			//tw_pq_enqueue(me->pq, e);
+			/*
+			if((e->dest_lp) == NULL){
+				printf("destination lp is NULL");
+			}
+			//printf("DDestination lp id is: === %d", e->dest_lp->id);
+			
+			if((e->dest_lp->kp) == NULL){
+				printf("the ckp is NULL");
+			}
+			if (e->dest_lp) {                              
+    				printf("Destination lp id: %u\n", e->dest_lp->id);
+			} else {
+    				printf("destination lp is NULL — cannot print id\n");
+			}
+			*/
+			//printf("The event id is: %u\n", e->event_id);
+			//printf("THE SIZE OF THE EVENT QUEUE %d\n", me->event_q.size);
+			//printf("THE SIZE OF THE FREE EVENT QUEUE %d\n", me->free_q.size);
+			
+			printf("recv_finish: remote event [cancel %u] FROM: LP %lu, PE %lu, TO: LP %lu, PE %lu at TS %lf \n",
+  			 e->state.cancel_q, (tw_lpid)e->src_lp, e->send_pe, (tw_lpid)e->dest_lp, me->id, e->recv_ts);	
+			
+			e->dest_lp = g_tw_lp[0];
+			tw_pq_enqueue(me->pq, e);
+			//printf("THE SIZE OF THE EVENT QUEUE %d\n", me->event_q.size);
+			//printf("THE LP ID IS (BEFORE TRANSFERING TO LOCAL LP): %d\n", id);
+
 		}
 	}
 	if (rank == 1) {
-        printf("after gvt\n");
+        	printf("AFTER RECEIVE, SIZE OF PQ: %d CURRENT GVT TIME: %f\n", tw_pq_get_size(me->pq), TW_STIME_DBL(me->GVT_sig.recv_ts));
         }
 #ifdef USE_RAND_TIEBREAKER
-        if (TW_STIME_DBL(me->GVT_sig.recv_ts) > g_tw_ts_end)
-            break;
+        if (TW_STIME_DBL(me->GVT_sig.recv_ts) > g_tw_ts_end){
+             if (rank == 3) {
+		printf("TRIGGERED!!!!!!  SIZE OF PQ %d\n", tw_pq_get_size(me->pq));
+	}
+		break;}
 #else
         if (TW_STIME_DBL(me->GVT) > g_tw_ts_end)
             break;
 #endif
-
+	if (rank == 0) {
+                printf("BEFORE EXECUTING EVENT, SIZE OF PQ %d\n", tw_pq_get_size(me->pq));
+        }
         //tw_sched_batch(me);
 	tw_sched_batch_clone(me, &clone_depth);
     }
