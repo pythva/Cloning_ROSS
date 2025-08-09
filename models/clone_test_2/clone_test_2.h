@@ -15,14 +15,15 @@ struct clone_test_2_state
 
 enum message_type
   {
-    hello_0 = 1,
-    hello_1, 
+    branch = 1,
+    regular, 
   };
 
 
 struct clone_test_2_message
 {
   message_type     type_of_message;
+  tw_peid sender_pe;
 	
 };
 

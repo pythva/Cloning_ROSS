@@ -33,7 +33,8 @@ enum tw_synch_e {
     OPTIMISTIC_DEBUG,
     OPTIMISTIC_REALTIME,
     OPTIMISTIC_FOO,
-    CLONE
+    CLONE,
+    SEQUENTIAL_CLONE
 };
 
 typedef enum tw_synch_e tw_synch;

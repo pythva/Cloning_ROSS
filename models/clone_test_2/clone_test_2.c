@@ -83,11 +83,22 @@ clone_test_2_init(clone_test_2_state * s, tw_lp * lp)
   
   if (lp->gid == 0)
   {
-    tw_event_send(
+   /*
+	 tw_event_send(
     tw_event_new(lp->gid,
            tw_rand_exponential(lp->rng, DUNE_PILOT_START_TIME),
            lp));
-  }
+  */
+	  tw_event *e;
+	  clone_test_2_message *m;
+	  e = tw_event_new(lp->gid,
+           tw_rand_exponential(lp->rng, DUNE_PILOT_START_TIME),
+           lp);
+	  m = tw_event_data(e);
+	  m->type_of_message = regular;
+	  tw_event_send(e);
+
+	}
 }
 
 void
@@ -103,22 +114,92 @@ void
 clone_clone_test_2_event_handler(clone_test_2_state * s, tw_bf * bf, clone_test_2_message * m, tw_lp * lp, int * clone_handler)
 { 
   // assuming only lp 0 send message to lp0, then lp0 and lp0 is the only person that do the incrementation
-  
+  /*
   if((lp->id) == 3){
   	printf("INSIDE LP3 HANDLER");
   }
 
   printf("PE ID: %d\n", g_tw_mynode);
+  */
+
+  /*
   if(((s->counter) % 2 == 1)){
   	*clone_handler = 1;  
   }
   s->counter++; //only lp0 should the lp will increment one 
-  if((s->counter) < 5){//tree branch will be 7, two branch is 5, if one branch then 3
+  if((s->counter) < 3){//three branch will be 7, two branch is 5, if one branch then 3
   	tw_event_send(
     		tw_event_new(lp->gid,
            	tw_rand_exponential(lp->rng, DUNE_PILOT_START_TIME),
            	lp));
   }
+*/	
+
+	//tw_event *event;
+        //clone_test_2_message *message;
+ 	
+	switch(m->type_of_message)
+    {
+    	case branch:
+    	{
+		// current just incremnet
+		// need to distinguish which is main with is differnet
+		// now just send regular
+		//s->counter++;// for now
+
+		if(m->sender_pe == g_tw_mynode){// origional
+			s->counter+=100;
+		}else{// branc
+			s->counter++;
+		}
+		if((s->counter) < 3){
+		tw_event *event;
+                clone_test_2_message *message;
+                event = tw_event_new(lp->gid,
+                tw_rand_exponential(lp->rng, DUNE_PILOT_START_TIME),
+                                lp);
+                message = tw_event_data(event);
+                message->type_of_message = regular;
+		message->sender_pe = g_tw_mynode;// current pe
+                tw_event_send(event);}
+
+
+	break;
+	}
+	case regular:
+	{
+		if(((s->counter) % 2 == 1)){// case where need to branch
+        		*clone_handler = 1;
+			// send with branh type message
+			tw_event *event;
+          		clone_test_2_message *message;
+          		event = tw_event_new(lp->gid,
+           		tw_rand_exponential(lp->rng, DUNE_PILOT_START_TIME),
+           		lp);
+          		message = tw_event_data(event);
+          		message->type_of_message = branch;// branch type message 
+          		message->sender_pe = g_tw_mynode;// current pe
+			tw_event_send(event);
+			break;
+  		}
+
+		s->counter++; //regular situation, just increment
+
+		// regular send
+		if((s->counter) < 3){
+			tw_event *event;
+                	clone_test_2_message *message;
+                	event = tw_event_new(lp->gid,
+                	tw_rand_exponential(lp->rng, DUNE_PILOT_START_TIME),
+                        	lp);
+                	message = tw_event_data(event);
+                	message->type_of_message = regular;
+			message->sender_pe = g_tw_mynode;// current pe
+               		tw_event_send(event);
+		}
+	break;
+	}	
+    }
 }
 
 void
@@ -273,6 +354,7 @@ main(int argc, char **argv)
 #ifdef USE_DAMARIS
     } // end if(g_st_ross_rank)
 #endif
+  //printf("END!!!!!!");
   tw_end();
   
   return 0;

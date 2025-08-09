@@ -816,6 +816,197 @@ void tw_scheduler_sequential(tw_pe * me) {
     (*me->type.final)(me);
 }
 
+
+
+
+void tw_scheduler_sequential_clone(tw_pe * me) {
+    tw_stime gvt = TW_STIME_CRT(0.0);
+    int clone_depth = 0;// init all clone_depth to 0
+    /*
+    if(tw_nnodes() > 1) {
+        tw_error(TW_LOC, "Sequential Scheduler used for world size greater than 1.");
+    }
+    */
+    tw_event *cev;
+
+    printf("*** START SEQUENTIAL SIMULATION ***\n\n");
+    
+    tw_wall_now(&me->start_time);
+    me->stats.s_total = tw_clock_read();
+
+    int world_size;
+    int rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+    build_clone_state_type();
+    if(g_tw_mynode != 0){// meaning only block when it is not pe 0, the origional pe
+	unsigned int sender_location = 0;
+	unsigned int child = (unsigned int)g_tw_mynode;
+    	unsigned int msb   = 31u - __builtin_clz(child);
+    	sender_location    = child & ~(1u << msb);
+
+	//MPI_Request rreq;               /* handle for this receive          */
+
+	MPI_Request  req[2];                      /* req[0] = depth, req[1] = terminate */
+
+	// depth request
+	MPI_Irecv(&clone_depth,             /* buffer            */
+          1, MPI_INT,               /* count / datatype  */
+          sender_location,          /* source rank       */
+          99, MPI_COMM_WORLD,       /* tag / communicator*/
+          &req[0]);                   /* request handle    */
+
+	//termination request
+	MPI_Irecv(NULL, 0, MPI_CHAR,               /* empty terminate msg   */
+          sender_location, 299, MPI_COMM_WORLD, &req[1]);
+
+
+    	//MPI_Request req[1] = { rreq };      /* array of requests (size 1) */
+	MPI_Status  status;                 /* optional; pass MPI_STATUS_IGNORE if not needed */
+	int          idx;
+
+	MPI_Waitany(2,          /* number of requests in the array          */
+            req,        /* array base pointer                        */
+            &idx,       /* returns index of completed request (0)    */
+            &status);   /* status for that request                   */
+
+	// bracnk, receive depth or terminate
+	if(idx == 0){
+	clone_depth += 1; /* local depth is parent+1 */
+	//printf("LOCAL CALCULATED msb: %d", msb);
+	printf("LOCAL clone_depth arrived: %d, LOCAL CALCULATED msb %d\n", clone_depth, msb);	
+    	clone_progress_recv(sender_location);
+
+	MPI_Status event_status;
+	tw_event	*e = NULL;
+	e = tw_event_grab(me);
+			MPI_Recv(e,
+         		(int)g_tw_event_msg_sz,
+         		MPI_BYTE,
+         		sender_location,            //not wild card source
+         		199,
+         		MPI_COMM_WORLD,
+         		&event_status);
+	e->dest_lp = g_tw_lp[0];// test script only have 1 lp per kp
+	tw_pq_enqueue(me->pq, e);
+	}else{ 
+		// send termination to children
+		// terminate it seld
+		printf("TERMINATE %d\n", rank);
+		clone_depth = msb+1;
+		//tw_wall_now(&me->end_time);
+    		//me->stats.s_total = tw_clock_read() - me->stats.s_total;
+		//return;
+	}
+    }
+
+    while ((cev = tw_pq_dequeue(me->pq))) {
+        tw_lp *clp = cev->dest_lp;
+        tw_kp *ckp = clp->kp;
+
+        me->cur_event = cev;
+#ifdef USE_RAND_TIEBREAKER
+        ckp->last_sig = cev->sig;
+#else
+        ckp->last_time = cev->recv_ts;
+
+        // Note: I believe that this doesn't fully capture all event ties
+        if(TW_STIME_CMP(cev->recv_ts, tw_pq_minimum(me->pq)) == 0) {
+            me->stats.s_pe_event_ties++;
+        }
+#endif
+
+        gvt = cev->recv_ts;
+        if(TW_STIME_DBL(gvt)/g_tw_ts_end > percent_complete && (g_tw_mynode == g_tw_masternode)) {
+            gvt_print(gvt);
+        }
+
+        reset_bitfields(cev);
+        clp->critical_path = ROSS_MAX(clp->critical_path, cev->critical_path)+1;
+        
+	int clone_flag = 0;// clone flag
+
+	//(*clp->type->event)(clp->cur_state, &cev->cv, tw_event_data(cev), clp);
+        
+	(*clp->type->clone_event)(clp->cur_state, &cev->cv,tw_event_data(cev), clp, &clone_flag);// calling clone event
+	
+	if (clone_flag == 1){
+		//printf("cloning is needed, testing depth is %d\n", clone_depth);
+		// using the depth to calculated which kp to send the data
+		MPI_Request sreq;
+        	int des = (int)g_tw_mynode | (1u << (clone_depth));// the local id plus the shift
+		MPI_Isend(&clone_depth, 1, MPI_INT,
+                  	/*dest=*/des, 99, MPI_COMM_WORLD, &sreq);
+		clone_depth += 1;// increment the depth
+		clone_send_state(des);
+		MPI_Wait(&sreq, MPI_STATUS_IGNORE);
+		if(tw_pq_get_size(me->pq)){
+			tw_event *temp;
+			temp = tw_pq_dequeue(me->pq);
+			//printf("PRIOR SENDING: LP %lu, TO: LP %lu \n",
+                        // (tw_lpid)temp->src_lp, (tw_lpid)temp->dest_lp);
+
+			MPI_Send(
+    			temp,                               // Buffer to send
+    			(int)g_tw_event_msg_sz,              // Number of bytes
+    			MPI_BYTE,                        // Data type
+    			(int)des,                    // Destination rank
+    			199,                       // Tag (must match)
+    			MPI_COMM_WORLD                    // Communicator
+			);
+
+			tw_pq_enqueue(me->pq, temp);
+		}
+	}	
+	if (g_st_ev_trace == FULL_TRACE)
+            st_collect_event_data(cev, tw_clock_read() / g_tw_clock_rate);
+        if (*clp->type->commit) {
+            (*clp->type->commit)(clp->cur_state, &cev->cv, tw_event_data(cev), clp);
+        }
+
+        if (me->cev_abort){
+            tw_error(TW_LOC, "insufficient event memory");
+        }
+
+        ckp->s_nevent_processed++;
+        // instrumentation
+        ckp->kp_stats->s_nevent_processed++;
+        clp->lp_stats->s_nevent_processed++;
+        tw_event_free(me, cev);
+
+	        if(g_st_rt_sampling &&
+                tw_clock_read() - g_st_rt_samp_start_cycles > g_st_rt_interval)
+        {
+            tw_clock current_rt = tw_clock_read();
+            if (g_st_model_stats == RT_STATS || g_st_model_stats == ALL_STATS)
+                st_collect_model_data(me, ((double)current_rt) / g_tw_clock_rate, RT_STATS);
+
+            g_st_rt_samp_start_cycles = tw_clock_read();
+        }
+    }
+    tw_wall_now(&me->end_time);
+    me->stats.s_total = tw_clock_read() - me->stats.s_total;
+    // place to send termination signal
+    for (unsigned shift = clone_depth; ;){
+    	int dest = (int)g_tw_mynode | (1u << shift);   /* compute target */
+
+	if (dest >= world_size){               /* stop if the rank would overflow */
+        		break;}
+	MPI_Request reqqq = MPI_REQUEST_NULL;	
+	MPI_Isend(NULL, 0, MPI_CHAR,
+              dest, 299, MPI_COMM_WORLD, &reqqq);
+    	printf("SENDING TERMINATION TO: %d\n", dest);
+	shift+=1;
+    }
+    printf("*** END SIMULATION ***\n\n");
+
+    tw_stats(me);
+
+    //printf("STUCK????? %d\n", g_tw_mynode);
+    (*me->type.final)(me);
+}
+
+
 void tw_scheduler_conservative(tw_pe * me) {
     tw_clock start;
     unsigned int msg_i;
